@@ -2,6 +2,7 @@ import socket
 import json
 import time
 import sys
+import ssl
 
 
 class Client:
@@ -9,13 +10,27 @@ class Client:
         with open(config_file, 'r') as file:
             self.config = json.load(file)
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.session_token = None
 
     def connect(self):
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+        self.socket = context.wrap_socket(self.socket, server_hostname=self.config['server']['ip'])
         self.socket.connect((self.config['server']['ip'], self.config['server']['port']))
         registration_data = json.dumps({"id": self.config['id'], "password": self.config['password']})
         self.socket.send(registration_data.encode())
         response = self.socket.recv(1024).decode()
+        self.session_token = self.extract_token(response)
         print(f"Server response: {response}")
+
+    def extract_token(self, response):
+        try:
+            response_data = json.loads(response)
+            return response_data.get('token')
+        except json.JSONDecodeError:
+            return None
 
     def perform_actions(self):
         for action in self.config['actions']['steps']:
@@ -23,7 +38,12 @@ class Client:
                 command, amount = action.split()
                 amount = int(amount)
                 action_data = json.dumps(
-                    {"id": self.config['id'], "password": self.config['password'], "action": command, "amount": amount})
+                    {"id": self.config['id'],
+                     "password": self.config['password'],
+                     "action": command,
+                     "amount": amount,
+                     "token": self.session_token
+                     })
                 self.socket.send(action_data.encode())
                 response = self.socket.recv(1024).decode()
                 print(f"Server response: {response}")
